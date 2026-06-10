@@ -51,6 +51,8 @@ show_help() {
     echo -e "${RESET}"
 }
 
+PYTHON_AVAILABLE=0
+
 check_deps() {
     for cmd in curl; do
         if ! command -v "$cmd" &>/dev/null; then
@@ -58,12 +60,22 @@ check_deps() {
             exit 1
         fi
     done
+    if command -v python3 &>/dev/null; then
+        PYTHON_AVAILABLE=1
+    else
+        echo -e "${YELLOW}[!] python3 not found. Results parsing will be limited.${RESET}"
+    fi
 }
 
 github_search() {
     local query="$1" label="$2"
     local encoded_query
-    encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$query'''))" 2>/dev/null || echo "$query" | sed 's/ /%20/g;s/:/%3A/g;s/\//%2F/g')
+    if [ "$PYTHON_AVAILABLE" -eq 1 ]; then
+        encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$query'''))" 2>/dev/null)
+    fi
+    if [ -z "$encoded_query" ]; then
+        encoded_query=$(echo "$query" | sed 's/ /%20/g;s/:/%3A/g;s/\//%2F/g')
+    fi
 
     echo -e "${YELLOW}[*] Searching GitHub for: $query${RESET}"
     echo "[GitRaider] $label query: $query" >> "$REPORT"
@@ -95,7 +107,8 @@ github_search() {
         echo -e "${GREEN}[+] Rate limit remaining: $remaining / $rate_limit${RESET}"
     fi
 
-    echo "$response" | python3 -c "
+    if [ "$PYTHON_AVAILABLE" -eq 1 ]; then
+        echo "$response" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -113,16 +126,14 @@ try:
         print('  ---')
 except json.JSONDecodeError:
         print('Failed to parse API response.')
-" 2>/dev/null >> "$REPORT"
-
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[!] API error. Check your token or network.${RESET}"
-        echo "[ERROR] API request failed." >> "$REPORT"
-        return 1
+" 2>/dev/null >> "$REPORT" || echo -e "${RED}[!] API error. Check your token or network.${RESET}"
+    else
+        echo "$response" | grep -o '"html_url":"[^"]*"' | head -10 >> "$REPORT"
     fi
 
     local result_count
-    result_count=$(echo "$response" | python3 -c "
+    if [ "$PYTHON_AVAILABLE" -eq 1 ]; then
+        result_count=$(echo "$response" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -130,6 +141,9 @@ try:
 except:
     print('0')
 " 2>/dev/null)
+    else
+        result_count=$(echo "$response" | grep -c '"html_url"')
+    fi
 
     if [ "$result_count" -gt 0 ] 2>/dev/null; then
         echo -e "${GREEN}[+] Found $result_count results for: $query${RESET}"
